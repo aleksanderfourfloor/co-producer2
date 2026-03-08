@@ -145,7 +145,7 @@ export class AIService {
    */
   async *chat(userMessage: string, forceIntent?: IntentCategory): AsyncGenerator<AgentEvent> {
     // Determine route before adding into history
-    const decision = forceIntent 
+    let decision = forceIntent 
       ? { intent: forceIntent, model: forceIntent === "simple" ? process.env.OPENAI_MODEL_FAST || "gpt-4o-mini" : process.env.OPENAI_MODEL || "gpt-4o", tools: [] } // tools: [] means all tools in logic below
       : await this.router.routeMessage(userMessage);
       
@@ -165,8 +165,9 @@ export class AIService {
     // Agentic loop — keep going until we get a text response (no more tool calls)
     let iterations = 0;
     const MAX_ITERATIONS = 25; // safety limit
+    let consecutiveToolFailures = 0;
 
-    const toolsDef = getToolDefinitionsByNames(decision.tools);
+    let toolsDef = getToolDefinitionsByNames(decision.tools);
 
     while (iterations < MAX_ITERATIONS) {
       iterations++;
@@ -237,14 +238,31 @@ export class AIService {
 
           // Execute the tool
           let result: unknown;
+          let isError = false;
           try {
             const handler = getToolHandler(toolName);
             if (!handler) {
-              throw new Error(`Unknown tool: ${toolName}`);
+              throw new Error(`Unknown tool: ${toolName}. This usually happens when the model tries to use a tool that is not in its allowed subset.`);
             }
             result = await handler(this.ableton, toolArgs);
           } catch (err: any) {
             result = { error: err.message };
+            isError = true;
+          }
+
+          if (isError) {
+            consecutiveToolFailures++;
+          } else {
+            consecutiveToolFailures = 0;
+          }
+
+          // Cascade logic: if we fail twice in a row with the fast model, escalate to the main model
+          if (consecutiveToolFailures >= 2 && decision.model !== (process.env.OPENAI_MODEL || "gpt-4o")) {
+            decision.model = process.env.OPENAI_MODEL || "gpt-4o";
+            decision.tools = getToolDefinitions().map(t => t.function.name);
+            toolsDef = getToolDefinitions();
+            yield { type: "thinking", data: { message: `Model struggled with constraints. Escalating to ${decision.model} with all tools.` } };
+            consecutiveToolFailures = 0; // reset
           }
 
           yield {

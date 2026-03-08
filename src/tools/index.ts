@@ -215,5 +215,8 @@ export const TOOL_GROUPS = {
   arrangement: [
     "get_track_sends", "set_track_send_level", "set_song_position",
     "set_arrangement_loop", "place_clip_in_arrangement", "load_audio_clip"
+  ],
+  analysis: [
+    "analyse_audio"
   ]
 };
