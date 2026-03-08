@@ -213,7 +213,7 @@ header {
   align-items: center;
   justify-content: center;
   font-size: 1.1rem;
-  color: white;
+  color: var(--bg-primary); /* Dark text on white button */
   background: var(--text-primary);
   border-radius: 50%;
   flex-shrink: 0;
@@ -226,7 +226,8 @@ header {
 }
 
 .btn-primary:disabled {
-  opacity: 0.3;
+  background: #2f2f2f;
+  color: #666666;
   cursor: default;
 }
 
@@ -326,6 +327,29 @@ main {
 
 .track-item:hover {
   background: var(--bg-card-hover);
+}
+
+.transport-btn {
+  background: var(--bg-tertiary);
+  color: #ffffff; /* Explicitly white for contrast */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-weight: 500;
+  font-size: 0.85em;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.transport-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: #ffffff;
+}
+
+.transport-btn.playing {
+  color: #10a37f; /* Bright green text */
+  border-color: rgba(16, 163, 127, 0.3);
+  background: rgba(16, 163, 127, 0.1);
 }
 
 .track-type-badge {

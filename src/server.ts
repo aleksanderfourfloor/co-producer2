@@ -101,6 +101,16 @@ wss.on("connection", (ws) => {
           JSON.stringify({ type: "error", data: { message: err.message } })
         );
       }
+    } else if (parsed.type === "transport_control") {
+      try {
+        if (parsed.action === "play") {
+          await ableton.play();
+        } else if (parsed.action === "stop") {
+          await ableton.stop();
+        }
+      } catch (err: any) {
+        ws.send(JSON.stringify({ type: "error", data: { message: "Failed to control transport: " + err.message } }));
+      }
     } else if (parsed.type === "reset") {
       agent.reset();
       ws.send(JSON.stringify({ type: "response", data: { content: "Conversation reset." } }));
@@ -118,6 +128,17 @@ ableton.onConnectionChange(
   () => broadcast({ type: "connection_status", data: { connected: true } }),
   () => broadcast({ type: "connection_status", data: { connected: false } })
 );
+
+ableton.on("session_changed", async () => {
+  try {
+    if (ableton.isConnected()) {
+      const info = await ableton.getSessionInfo();
+      broadcast({ type: "session_state", data: { connected: true, ...info } });
+    }
+  } catch (err) {
+    console.error("[Server] Error getting session info for broadcast:", err);
+  }
+});
 
 // ── Start ──────────────────────────────────────────────────────
 

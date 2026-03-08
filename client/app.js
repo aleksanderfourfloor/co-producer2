@@ -55,6 +55,10 @@ function handleServerMessage(msg) {
       if (msg.data.connected) fetchSessionInfo();
       break;
 
+    case "session_state":
+      renderSessionInfo(msg.data);
+      break;
+
     case "thinking":
       addActivityItem("thinking", "🤔", "Thinking...");
       showThinking();
@@ -108,53 +112,85 @@ async function fetchSessionInfo() {
   try {
     const res = await fetch(`${API_URL}/api/session`);
     const data = await res.json();
-
-    if (!data.connected) {
-      sessionInfo.innerHTML = `<div class="session-empty">Connect to Ableton Live to see session info</div>`;
-      return;
-    }
-
-    let html = "";
-
-    // Tempo
-    html += `
-      <div class="session-stat">
-        <span class="label">Tempo</span>
-        <span class="value">${Math.round(data.tempo)} BPM</span>
-      </div>`;
-
-    // Time Signature
-    html += `
-      <div class="session-stat">
-        <span class="label">Time Sig</span>
-        <span class="value">${data.signature_numerator}/${data.signature_denominator}</span>
-      </div>`;
-
-    // Playing
-    html += `
-      <div class="session-stat">
-        <span class="label">Transport</span>
-        <span class="value">${data.isPlaying ? "▶ Playing" : "⏹ Stopped"}</span>
-      </div>`;
-
-    // Tracks
-    if (data.tracks && data.tracks.length > 0) {
-      html += `<div class="track-list">`;
-      for (const track of data.tracks) {
-        html += `
-          <div class="track-item">
-            <span class="track-type-badge ${track.type}">${track.type}</span>
-            <span class="track-name">${escapeHtml(track.name)}</span>
-          </div>`;
-      }
-      html += `</div>`;
-    }
-
-    sessionInfo.innerHTML = html;
+    renderSessionInfo(data);
   } catch (err) {
     console.error("[Session] Fetch error:", err);
   }
 }
+
+function renderSessionInfo(data) {
+  if (!data || !data.connected) {
+    sessionInfo.innerHTML = `<div class="session-empty">Connect to Ableton Live to see session info</div>`;
+    return;
+  }
+
+  let html = "";
+
+  // Tempo
+  html += `
+    <div class="session-stat">
+      <span class="label">Tempo</span>
+      <span class="value">${Math.round(data.tempo)} BPM</span>
+    </div>`;
+
+  // Time Signature
+  html += `
+    <div class="session-stat">
+      <span class="label">Time Sig</span>
+      <span class="value">${data.signature_numerator}/${data.signature_denominator}</span>
+    </div>`;
+
+  // Playing
+  html += `
+    <div class="session-stat">
+      <span class="label">Transport</span>
+      <button 
+        id="transport-btn" 
+        class="value transport-btn ${data.isPlaying ? 'playing' : ''}"
+        data-playing="${data.isPlaying}"
+      >
+        ${data.isPlaying ? "⏹ Stop" : "▶ Play"}
+      </button>
+    </div>`;
+
+  // Tracks
+  if (data.tracks && data.tracks.length > 0) {
+    html += `<div class="track-list">`;
+    for (const track of data.tracks) {
+      let isMutedOrSolo = "";
+      if (track.isSoloed) isMutedOrSolo = ` <span style="color:var(--accent-amber);font-size:0.7em">(S)</span>`;
+      else if (track.isMuted) isMutedOrSolo = ` <span style="color:var(--text-muted);font-size:0.7em">(M)</span>`;
+
+      html += `
+        <div class="track-item">
+          <span class="track-type-badge ${track.type}">${track.type}</span>
+          <span class="track-name">${escapeHtml(track.name)}${isMutedOrSolo}</span>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+
+  sessionInfo.innerHTML = html;
+}
+
+// Handle dynamic clicks on session info Panel (like the Transport button)
+sessionInfo.addEventListener("click", (e) => {
+  const btn = e.target.closest("#transport-btn");
+  if (!btn) return;
+
+  const isPlaying = btn.getAttribute("data-playing") === "true";
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ 
+      type: "transport_control", 
+      action: isPlaying ? "stop" : "play" 
+    }));
+    
+    // Optimistic UI update
+    btn.setAttribute("data-playing", (!isPlaying).toString());
+    btn.className = `value transport-btn ${!isPlaying ? 'playing' : ''}`;
+    btn.innerHTML = !isPlaying ? "⏹ Stop" : "▶ Play";
+  }
+});
 
 // ── Activity Log ────────────────────────────────────────────────
 
@@ -242,6 +278,18 @@ chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
+  }
+});
+
+// Global Keyboard Shortcuts
+document.addEventListener("keydown", (e) => {
+  // Toggle playback with Spacebar (only if not typing in an input field)
+  if (e.code === "Space" && e.target.tagName !== "TEXTAREA" && e.target.tagName !== "INPUT") {
+    e.preventDefault();
+    const btn = document.getElementById("transport-btn");
+    if (btn) {
+      btn.click(); // Reuse the existing click handling logic
+    }
   }
 });
 

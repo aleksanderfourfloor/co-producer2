@@ -7,22 +7,37 @@ export const browseInstrumentsTool = {
     type: "function" as const,
     function: {
       name: "browse_instruments",
-      description: `Browse Ableton Live's instrument browser. Use this to discover available instruments before loading one.
-You can browse the top-level categories or navigate into folders using the path parameter.
-Common instruments: Analog, Collision, Drift, Electric, Operator, Sampler, Simpler, Tension, Wavetable.
-For drums, use the "drums" category instead.`,
+      description: `Browse Ableton Live's browser for instruments, drums, sounds, and samples. Use this to discover what's available before loading.
+
+Categories:
+- "instruments": Synths like Analog, Drift, Operator, Wavetable, Simpler, Sampler
+- "drums": Drum Racks and kits. Common paths:
+  - ["Drum Rack"] → full drum rack presets (e.g., "Kit-909", "Kit-808", "Kit-Acoustik")
+  - ["Drum Hits"] → individual hits organized by type:
+    - ["Drum Hits", "Kick"] → kick samples (909, 808, acoustic, etc.)
+    - ["Drum Hits", "Snare"] → snare samples
+    - ["Drum Hits", "Hihat"] → hihat samples
+    - ["Drum Hits", "Clap"] → clap samples
+    - ["Drum Hits", "Percussion"] → percussion samples
+- "sounds": Preset sounds organized by type (Bass, Keys, Lead, Pad, etc.)
+- "samples": Raw audio samples from Ableton's library and installed packs
+
+Tips:
+- Always browse first to see what's available before trying to load
+- Navigate step by step: first browse the category, then drill into subfolders
+- If you don't find what you need, try a different category or path`,
       parameters: {
         type: "object",
         properties: {
           category: {
             type: "string",
-            enum: ["instruments", "drums", "sounds"],
-            description: "Which browser category to browse. Use 'instruments' for synths/instruments, 'drums' for drum racks/kits, 'sounds' for preset sounds.",
+            enum: ["instruments", "drums", "sounds", "samples"],
+            description: "Which browser category to browse. Use 'instruments' for synths, 'drums' for drum racks/kits/hits, 'sounds' for preset sounds, 'samples' for raw audio samples.",
           },
           path: {
             type: "array",
             items: { type: "string" },
-            description: "Optional path of folder names to navigate into. E.g., ['Analog'] to see Analog presets.",
+            description: "Optional path of folder names to navigate into. E.g., ['Drum Hits', 'Kick'] to browse kick drum samples, or ['Drum Rack'] to see drum rack presets.",
           },
         },
         required: ["category"],
@@ -35,10 +50,10 @@ For drums, use the "drums" category instead.`,
 
     if (path.length === 0) {
       const items = await ableton.browseCategory(category);
-      return { items: items.slice(0, 30), total: items.length };
+      return { items: items.slice(0, 50), total: items.length, hint: "Navigate into folders using the 'path' parameter to explore deeper." };
     }
     const items = await ableton.browsePath(category, path);
-    return { items: items.slice(0, 30), total: items.length };
+    return { items: items.slice(0, 50), total: items.length };
   },
 };
 
@@ -76,10 +91,10 @@ Common MIDI effects: Arpeggiator, Chord, Note Length, Pitch, Random, Scale, Velo
 
     if (path.length === 0) {
       const items = await ableton.browseCategory(category);
-      return { items: items.slice(0, 30), total: items.length };
+      return { items: items.slice(0, 50), total: items.length };
     }
     const items = await ableton.browsePath(category, path);
-    return { items: items.slice(0, 30), total: items.length };
+    return { items: items.slice(0, 50), total: items.length };
   },
 };
 
@@ -90,21 +105,31 @@ export const loadDeviceTool = {
     type: "function" as const,
     function: {
       name: "load_device",
-      description: `Load an instrument or effect from Ableton's browser onto the currently selected track. 
-IMPORTANT: You must first select the target track before loading a device. Use browse_instruments or browse_effects first to find the correct path.
-The path is an array of folder/item names to navigate to the device. Example: ["Analog"] loads the Analog synth, ["Overdrive"] loads the Overdrive effect.`,
+      description: `Load an instrument, effect, drum kit, or sample from Ableton's browser onto the currently selected track.
+
+IMPORTANT: Always use browse_instruments or browse_effects FIRST to discover the exact path, then load.
+
+Common loading examples:
+- Instrument: category="instruments", path=["Analog"] or ["Drift"]
+- 909 drum kit: category="drums", path=["Drum Rack", "Kit-909"]
+- 808 drum kit: category="drums", path=["Drum Rack", "Kit-808"]
+- Individual kick: category="drums", path=["Drum Hits", "Kick", "909 Kick"]
+- Effect: category="audio_effects", path=["Compressor"]
+- Sound preset: category="sounds", path=["Bass", "..."]
+
+If the exact name doesn't match, browse the folder first to see available items.`,
       parameters: {
         type: "object",
         properties: {
           category: {
             type: "string",
             enum: ["instruments", "audio_effects", "midi_effects", "drums", "sounds", "samples"],
-            description: "Which browser category the device is in.",
+            description: "Which browser category the device/sample is in.",
           },
           path: {
             type: "array",
             items: { type: "string" },
-            description: 'Path of folder/item names to navigate to and load. E.g., ["Analog"] or ["Compressor"].',
+            description: 'Path of folder/item names to navigate to and load. Always browse first if unsure of the exact path.',
           },
         },
         required: ["category", "path"],

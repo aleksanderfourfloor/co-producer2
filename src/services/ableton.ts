@@ -1,5 +1,6 @@
 import { Ableton } from "ableton-js";
 import type { Note, NoteExtended } from "ableton-js/util/note";
+import { EventEmitter } from "events";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -50,13 +51,15 @@ export interface MidiNote {
 
 // ── Ableton Service ────────────────────────────────────────────
 
-export class AbletonService {
+export class AbletonService extends EventEmitter {
   private ableton: Ableton;
   private connected = false;
   private onConnectCb?: () => void;
   private onDisconnectCb?: () => void;
+  private listenersSetup = false;
 
   constructor() {
+    super();
     this.ableton = new Ableton({ logger: console });
   }
 
@@ -66,11 +69,13 @@ export class AbletonService {
     this.ableton.on("connect", () => {
       this.connected = true;
       console.log("[Ableton] Connected");
+      this.setupSessionListeners();
       this.onConnectCb?.();
     });
 
     this.ableton.on("disconnect", () => {
       this.connected = false;
+      this.listenersSetup = false;
       console.log("[Ableton] Disconnected");
       this.onDisconnectCb?.();
     });
@@ -78,8 +83,44 @@ export class AbletonService {
     try {
       await this.ableton.start();
       this.connected = true;
+      this.setupSessionListeners();
     } catch (err) {
       console.warn("[Ableton] Could not connect on start:", err);
+    }
+  }
+
+  private async setupSessionListeners() {
+    if (this.listenersSetup || !this.connected) return;
+    this.listenersSetup = true;
+
+    try {
+      // Throttle the emit to avoid blasting the UI when many things change at once (e.g. loading a project)
+      let emitTimeout: NodeJS.Timeout | null = null;
+      const emitSessionChange = () => {
+        if (emitTimeout) clearTimeout(emitTimeout);
+        emitTimeout = setTimeout(() => {
+          this.emit("session_changed");
+        }, 300);
+      };
+
+      await this.ableton.song.addListener("tempo", emitSessionChange);
+      await this.ableton.song.addListener("is_playing", emitSessionChange);
+      await this.ableton.song.addListener("tracks", async (tracks) => {
+        emitSessionChange();
+        // Also listen to each track's name, mute, config, etc.
+        for (const track of tracks) {
+          try {
+            await track.addListener("name", emitSessionChange);
+            await track.addListener("mute", emitSessionChange);
+            await track.addListener("solo", emitSessionChange);
+          } catch (e) {
+            // Ignore if listener attach fails for a track
+          }
+        }
+      });
+      console.log("[Ableton] Session listeners configured");
+    } catch (err) {
+      console.warn("[Ableton] Failed to setup some listeners:", err);
     }
   }
 
@@ -96,6 +137,8 @@ export class AbletonService {
     this.onConnectCb = onConnect;
     this.onDisconnectCb = onDisconnect;
   }
+
+  // Session Info ─────────────────────────────────────
 
   // Session Info ─────────────────────────────────────
 
@@ -513,5 +556,267 @@ export class AbletonService {
     }));
 
     await clip.setNotes(abletonNotes);
+  }
+
+  // Track Management ──────────────────────────────────
+
+  private async getTrackByIndex(trackIndex: number) {
+    const rawTracks = await this.ableton.song.get("tracks");
+    const track = rawTracks[trackIndex];
+    if (!track) throw new Error(`Track ${trackIndex} not found`);
+    return track;
+  }
+
+  async renameTrack(trackIndex: number, name: string): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    await track.set("name", name);
+  }
+
+  async setTrackMute(trackIndex: number, mute: boolean): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    await track.set("mute", mute);
+  }
+
+  async setTrackSolo(trackIndex: number, solo: boolean): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    await track.set("solo", solo);
+  }
+
+  async setTrackVolume(trackIndex: number, value: number): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    const mixer = await track.get("mixer_device");
+    const volumeParam = await mixer.get("volume");
+    await volumeParam.set("value", value);
+  }
+
+  async setTrackPanning(trackIndex: number, value: number): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    const mixer = await track.get("mixer_device");
+    const panParam = await mixer.get("panning");
+    await panParam.set("value", value);
+  }
+
+  async setTrackColor(trackIndex: number, colorIndex: number): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    await track.set("color_index", colorIndex);
+  }
+
+  async armTrack(trackIndex: number, arm: boolean): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    await track.set("arm", arm);
+  }
+
+  // Clip Management ──────────────────────────────────
+
+  private async getClipFromSlot(trackIndex: number, clipSlotIndex: number) {
+    const track = await this.getTrackByIndex(trackIndex);
+    const clipSlots = await track.get("clip_slots");
+    const slot = clipSlots[clipSlotIndex];
+    if (!slot) throw new Error(`Clip slot ${clipSlotIndex} not found`);
+    const hasClip = await slot.get("has_clip");
+    if (!hasClip) throw new Error(`No clip in track ${trackIndex}, slot ${clipSlotIndex}`);
+    const clip = await slot.get("clip");
+    if (!clip) throw new Error("Could not get clip");
+    return clip;
+  }
+
+  async renameClip(trackIndex: number, clipSlotIndex: number, name: string): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await clip.set("name", name);
+  }
+
+  async fireClip(trackIndex: number, clipSlotIndex: number): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await clip.fire();
+  }
+
+  async stopClip(trackIndex: number, clipSlotIndex: number): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await clip.stop();
+  }
+
+  async setClipLooping(trackIndex: number, clipSlotIndex: number, looping: boolean): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await clip.set("looping", looping);
+  }
+
+  // Scene Management ─────────────────────────────────
+
+  async fireScene(sceneIndex: number): Promise<void> {
+    const scenes = await this.ableton.song.get("scenes");
+    const scene = scenes[sceneIndex];
+    if (!scene) throw new Error(`Scene ${sceneIndex} not found`);
+    await scene.fire();
+  }
+
+  async createScene(index?: number): Promise<{ index: number; name: string }> {
+    const scene = await this.ableton.song.createScene(index);
+    const name = await scene.get("name");
+    const allScenes = await this.ableton.song.get("scenes");
+    const sceneIndex = allScenes.findIndex((s) => s.raw.id === scene.raw.id);
+    return { index: sceneIndex, name };
+  }
+
+  async deleteScene(sceneIndex: number): Promise<void> {
+    await this.ableton.song.deleteScene(sceneIndex);
+  }
+
+  async duplicateScene(sceneIndex: number): Promise<void> {
+    await this.ableton.song.duplicateScene(sceneIndex);
+  }
+
+  // Session Operations ───────────────────────────────
+
+  async undo(): Promise<void> {
+    await this.ableton.song.undo();
+  }
+
+  async redo(): Promise<void> {
+    await this.ableton.song.redo();
+  }
+
+  async stopAllClips(): Promise<void> {
+    await this.ableton.song.stopAllClips();
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // Phase 1: Note Editing, Clip Properties, Session Settings
+  // ──────────────────────────────────────────────────────────────
+
+  async removeNotes(
+    trackIndex: number,
+    clipSlotIndex: number,
+    fromTime: number,
+    fromPitch: number,
+    timeSpan: number,
+    pitchSpan: number
+  ): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await clip.removeNotesExtended(fromTime, fromPitch, timeSpan, pitchSpan);
+  }
+
+  async replaceAllNotes(
+    trackIndex: number,
+    clipSlotIndex: number,
+    notes: MidiNote[]
+  ): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    // Clear existing notes then set new ones
+    await clip.removeNotesExtended(0, 0, 9999, 128);
+    if (notes.length > 0) {
+      const abletonNotes: Note[] = notes.map((n) => ({
+        pitch: n.pitch,
+        time: n.start_time,
+        duration: n.duration,
+        velocity: n.velocity,
+        muted: n.mute ?? false,
+      }));
+      await clip.setNotes(abletonNotes);
+    }
+  }
+
+  async quantizeClip(
+    trackIndex: number,
+    clipSlotIndex: number,
+    grid: number,
+    amount: number
+  ): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await clip.quantize(grid, amount);
+  }
+
+  async duplicateClipLoop(trackIndex: number, clipSlotIndex: number): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await clip.duplicateLoop();
+  }
+
+  async setClipLoopPoints(
+    trackIndex: number,
+    clipSlotIndex: number,
+    loopStart: number,
+    loopEnd: number
+  ): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await clip.set("loop_start", loopStart);
+    await clip.set("loop_end", loopEnd);
+  }
+
+  async setClipMarkers(
+    trackIndex: number,
+    clipSlotIndex: number,
+    startMarker: number,
+    endMarker: number
+  ): Promise<void> {
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await clip.set("start_marker", startMarker);
+    await clip.set("end_marker", endMarker);
+  }
+
+  async setGrooveAmount(amount: number): Promise<void> {
+    await this.ableton.song.set("groove_amount", amount);
+  }
+
+  async setSwingAmount(amount: number): Promise<void> {
+    await this.ableton.song.set("swing_amount", amount);
+  }
+
+  async setTimeSignature(numerator: number, denominator: number): Promise<void> {
+    await this.ableton.song.set("signature_numerator", numerator);
+    await this.ableton.song.set("signature_denominator", denominator);
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // Phase 2: Sends, Arrangement, Audio Clips
+  // ──────────────────────────────────────────────────────────────
+
+  async getTrackSends(
+    trackIndex: number
+  ): Promise<{ index: number; name: string; value: number; min: number; max: number }[]> {
+    const track = await this.getTrackByIndex(trackIndex);
+    const mixer = await track.get("mixer_device");
+    const sends = await mixer.get("sends");
+    return Promise.all(
+      sends.map(async (send, index) => ({
+        index,
+        name: await send.get("name"),
+        value: await send.get("value"),
+        min: await send.get("min"),
+        max: await send.get("max"),
+      }))
+    );
+  }
+
+  async setTrackSendLevel(trackIndex: number, sendIndex: number, value: number): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    const mixer = await track.get("mixer_device");
+    const sends = await mixer.get("sends");
+    const send = sends[sendIndex];
+    if (!send) throw new Error(`Send ${sendIndex} not found on track ${trackIndex}`);
+    await send.set("value", value);
+  }
+
+  async setSongPosition(time: number): Promise<void> {
+    await this.ableton.song.set("current_song_time", time);
+  }
+
+  async setArrangementLoop(enabled: boolean, start?: number, length?: number): Promise<void> {
+    await this.ableton.song.set("loop", enabled);
+    if (start !== undefined) await this.ableton.song.set("loop_start", start);
+    if (length !== undefined) await this.ableton.song.set("loop_length", length);
+  }
+
+  async duplicateClipToArrangement(
+    trackIndex: number,
+    clipSlotIndex: number,
+    time: number
+  ): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    const clip = await this.getClipFromSlot(trackIndex, clipSlotIndex);
+    await track.duplicateClipToArrangement(clip, time);
+  }
+
+  async createAudioClip(trackIndex: number, filePath: string, position: number): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    await track.createAudioClip(filePath, position);
   }
 }
