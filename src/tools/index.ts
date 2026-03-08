@@ -218,5 +218,8 @@ export const TOOL_GROUPS = {
   ],
   analysis: [
     "analyse_audio"
+  ],
+  ux: [
+    "update_ui_status"
   ]
 };

@@ -13,7 +13,7 @@ export interface ChatMessage {
 }
 
 export interface AgentEvent {
-  type: "thinking" | "tool_call" | "tool_result" | "response" | "error";
+  type: "thinking" | "tool_call" | "tool_result" | "response_chunk" | "response" | "error";
   data: unknown;
 }
 
@@ -72,6 +72,9 @@ You can READ the current Ableton session (tempo, tracks, clips, MIDI notes) and 
 - Set **groove** and **swing** amounts
 - Set **time signature**
 
+### UI & Progress
+- **Update UI status** (\`update_ui_status\`) to tell the user what you are currently working on during long tasks (e.g. "Browsing for drum kits...", "Writing chord progression...")
+
 ## Your Expertise
 - Music theory: scales, chords, progressions, harmonics, key relationships
 - Rhythm & groove: drum patterns, swing, ghost notes, syncopation
@@ -115,6 +118,7 @@ For synths: use category "instruments" and browse for Analog, Drift, Wavetable, 
 - Use replace_all_notes instead of creating new clips when iterating on existing patterns
 - When asked to refine a pattern, read the current notes first, modify, then replace
 - Explain your musical choices to help the user learn
+- During complex or autonomous tasks, explicitly call \`update_ui_status\` before you begin a sub-task so the user knows you aren't stuck (e.g. "Writing the bassline...", "Searching for effects").
 - If you can't do something (like audio analysis), be honest and suggest alternatives`;
 
 
@@ -140,6 +144,46 @@ export class AIService {
   }
 
   /**
+   * Compresses the conversation history when it gets too long to save tokens.
+   */
+  async *manageContextWindow(): AsyncGenerator<AgentEvent> {
+    const MAX_HISTORY = 30; // Max messages before triggering compression
+    const KEEP_RECENT = 10; // How many recent messages to keep raw
+    
+    if (this.conversationHistory.length > MAX_HISTORY) {
+      const systemPrompts = this.conversationHistory.filter(m => m.role === "system");
+      const nonSystem = this.conversationHistory.filter(m => m.role !== "system");
+      
+      if (nonSystem.length <= KEEP_RECENT) return;
+      
+      const toSummarize = nonSystem.slice(0, nonSystem.length - KEEP_RECENT);
+      const recent = nonSystem.slice(nonSystem.length - KEEP_RECENT);
+
+      yield { type: "thinking", data: { message: "Compressing conversation history to save tokens..." } };
+
+      const summaryPrompt = `Summarize the following earlier conversation history between the user and the AI Co-Producer. Focus on the user's overarching goals, musical preferences, what has been created so far, and any specific context needed for future actions. Ignore tool execution details, focus on the High Level narrative. Keep it concise but comprehensive.\n\nHistory to summarize:\n${JSON.stringify(toSummarize)}`;
+      
+      try {
+        const summaryResponse = await this.openai.chat.completions.create({
+          model: process.env.OPENAI_MODEL_FAST || "gpt-4o-mini",
+          messages: [{ role: "user", content: summaryPrompt }],
+          temperature: 0.3
+        });
+        
+        const summaryText = summaryResponse.choices[0]?.message?.content || "";
+        
+        this.conversationHistory = [
+          systemPrompts[0], // Original system prompt
+          { role: "system", content: `Previous conversation summary:\n${summaryText}` },
+          ...recent
+        ];
+      } catch (err) {
+        console.error("Failed to summarize history:", err);
+      }
+    }
+  }
+
+  /**
    * Process a user message through the AI with tool calling.
    * Yields events as the agent thinks, calls tools, and responds.
    */
@@ -162,6 +206,9 @@ export class AIService {
     // Add user message to history
     this.conversationHistory.push({ role: "user", content: userMessage });
 
+    // Manage context window before proceeding
+    yield* this.manageContextWindow();
+
     // Agentic loop — keep going until we get a text response (no more tool calls)
     let iterations = 0;
     const MAX_ITERATIONS = 25; // safety limit
@@ -179,13 +226,56 @@ export class AIService {
       const MAX_RETRIES = 5;
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
-          response = await this.openai.chat.completions.create({
+          const stream = await this.openai.chat.completions.create({
             model: decision.model,
             messages: this.conversationHistory as any,
             tools: toolsDef as any,
             tool_choice: "auto",
             temperature: 0.7,
+            stream: true, // Enable Server-Sent Events from OpenAI
           });
+
+          let content = "";
+          let toolCalls: any[] = [];
+          
+          // Reconstitute the message from chunks
+          for await (const chunk of stream) {
+            const delta = chunk.choices[0]?.delta;
+            if (!delta) continue;
+            
+            if (delta.content) {
+              content += delta.content;
+              // Yield the text piece to the WebSocket client immediately
+              yield { type: "response_chunk", data: { text: delta.content } };
+            }
+            
+            // Rebuild the tool arguments string
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                if (!toolCalls[tc.index]) {
+                  toolCalls[tc.index] = { 
+                    id: tc.id, 
+                    type: tc.type || "function", 
+                    function: { name: tc.function?.name || "", arguments: "" } 
+                  };
+                }
+                if (tc.function?.name) toolCalls[tc.index].function.name += tc.function.name;
+                if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments;
+              }
+            }
+          }
+
+          // Build a mock response object that matches what the rest of the flow expects
+          response = {
+            choices: [{
+              message: {
+                role: "assistant",
+                content: content || null,
+                tool_calls: toolCalls.length > 0 ? toolCalls : undefined
+              }
+            }]
+          };
+
           break; // success
         } catch (err: any) {
           // Retry on rate limit (429) errors
@@ -221,22 +311,31 @@ export class AIService {
 
       // If there are tool calls, execute them
       if (message.tool_calls && message.tool_calls.length > 0) {
+        // 1. First, yield all the 'tool_call' events so the UI updates instantly
         for (const toolCall of message.tool_calls) {
           const toolName = toolCall.function.name;
           let toolArgs: Record<string, unknown> = {};
+          try {
+            toolArgs = JSON.parse(toolCall.function.arguments || "{}");
+          } catch {
+            toolArgs = {};
+          }
+          yield {
+            type: "tool_call",
+            data: { name: toolName, args: toolArgs, id: toolCall.id },
+          };
+        }
 
+        // 2. Execute all tools in parallel to drastically improve speed
+        const toolPromises = message.tool_calls.map(async (toolCall) => {
+          const toolName = toolCall.function.name;
+          let toolArgs: Record<string, unknown> = {};
           try {
             toolArgs = JSON.parse(toolCall.function.arguments || "{}");
           } catch {
             toolArgs = {};
           }
 
-          yield {
-            type: "tool_call",
-            data: { name: toolName, args: toolArgs, id: toolCall.id },
-          };
-
-          // Execute the tool
           let result: unknown;
           let isError = false;
           try {
@@ -250,32 +349,44 @@ export class AIService {
             isError = true;
           }
 
-          if (isError) {
-            consecutiveToolFailures++;
-          } else {
-            consecutiveToolFailures = 0;
-          }
+          return { toolCall, toolName, result, isError };
+        });
 
-          // Cascade logic: if we fail twice in a row with the fast model, escalate to the main model
-          if (consecutiveToolFailures >= 2 && decision.model !== (process.env.OPENAI_MODEL || "gpt-4o")) {
-            decision.model = process.env.OPENAI_MODEL || "gpt-4o";
-            decision.tools = getToolDefinitions().map(t => t.function.name);
-            toolsDef = getToolDefinitions();
-            yield { type: "thinking", data: { message: `Model struggled with constraints. Escalating to ${decision.model} with all tools.` } };
-            consecutiveToolFailures = 0; // reset
-          }
+        // 3. Wait for all parallel executions to finish
+        const results = await Promise.all(toolPromises);
+
+        let errorCountInThisBatch = 0;
+
+        // 4. Yield results and update history
+        for (const { toolCall, toolName, result, isError } of results) {
+          if (isError) errorCountInThisBatch++;
 
           yield {
             type: "tool_result",
             data: { name: toolName, result, id: toolCall.id },
           };
 
-          // Add tool result to history
           this.conversationHistory.push({
             role: "tool",
             content: JSON.stringify(result),
             tool_call_id: toolCall.id,
           });
+        }
+
+        // Track consecutive failures for the cascade logic
+        if (errorCountInThisBatch > 0) {
+          consecutiveToolFailures++;
+        } else {
+          consecutiveToolFailures = 0;
+        }
+
+        // Cascade logic: if we fail twice in a row with the fast model, escalate to the main model
+        if (consecutiveToolFailures >= 2 && decision.model !== (process.env.OPENAI_MODEL || "gpt-4o")) {
+          decision.model = process.env.OPENAI_MODEL || "gpt-4o";
+          decision.tools = getToolDefinitions().map(t => t.function.name);
+          toolsDef = getToolDefinitions();
+          yield { type: "thinking", data: { message: `Model struggled with constraints. Escalating to ${decision.model} with all tools.` } };
+          consecutiveToolFailures = 0; // reset
         }
 
         // Continue the loop — AI will see the tool results and decide what to do next

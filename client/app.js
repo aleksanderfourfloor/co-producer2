@@ -8,6 +8,8 @@ const API_URL = `http://${window.location.hostname}:3001`;
 let ws = null;
 let isConnectedToAbleton = false;
 let isProcessing = false;
+let currentAssistantDiv = null;
+let currentAssistantText = "";
 
 // ── DOM Elements ────────────────────────────────────────────────
 
@@ -65,11 +67,15 @@ function handleServerMessage(msg) {
       break;
 
     case "tool_call":
-      addActivityItem(
-        "tool_call",
-        "🔧",
-        `Calling: ${msg.data.name}(${summarizeArgs(msg.data.args)})`
-      );
+      if (msg.data.name === "update_ui_status") {
+        updateThinkingText(msg.data.args.message);
+      } else {
+        addActivityItem(
+          "tool_call",
+          "🔧",
+          `Calling: ${msg.data.name}(${summarizeArgs(msg.data.args)})`
+        );
+      }
       break;
 
     case "tool_result":
@@ -81,9 +87,30 @@ function handleServerMessage(msg) {
       }
       break;
 
+    case "response_chunk":
+      hideThinking();
+      if (!currentAssistantDiv) {
+        currentAssistantDiv = document.createElement("div");
+        currentAssistantDiv.className = "message assistant-message";
+        currentAssistantDiv.innerHTML = `<div class="message-content"></div>`;
+        chatMessages.appendChild(currentAssistantDiv);
+      }
+      currentAssistantText += msg.data.text;
+      currentAssistantDiv.querySelector(".message-content").textContent = currentAssistantText;
+      scrollChat();
+      break;
+
     case "response":
       hideThinking();
-      addAssistantMessage(msg.data.content);
+      if (currentAssistantDiv) {
+        // Finalize chunked message
+        currentAssistantDiv.querySelector(".message-content").innerHTML = formatMarkdown(currentAssistantText);
+        currentAssistantDiv = null;
+        currentAssistantText = "";
+      } else if (msg.data.content) {
+        // Fallback for non-chunked text
+        addAssistantMessage(msg.data.content);
+      }
       isProcessing = false;
       updateSendButton();
       break;
@@ -250,7 +277,7 @@ function showThinking() {
   indicator.id = "thinking";
   indicator.innerHTML = `
     <div class="thinking-dots"><span></span><span></span><span></span></div>
-    <span>Co-Producer is working...</span>
+    <span class="thinking-text">Co-Producer is working...</span>
   `;
   chatMessages.appendChild(indicator);
   scrollChat();
@@ -259,6 +286,20 @@ function showThinking() {
 function hideThinking() {
   const existing = document.getElementById("thinking");
   if (existing) existing.remove();
+}
+
+function updateThinkingText(text) {
+  const existing = document.getElementById("thinking");
+  if (existing) {
+    const textNode = existing.querySelector(".thinking-text");
+    if (textNode) {
+      textNode.textContent = text;
+    }
+  } else {
+    // If it's not showing, show it with this text
+    showThinking();
+    updateThinkingText(text);
+  }
 }
 
 function scrollChat() {
@@ -330,6 +371,8 @@ function resetConversation() {
 
   // Clear activity log
   activityLog.innerHTML = `<div class="activity-empty">Agent activity will appear here</div>`;
+  currentAssistantDiv = null;
+  currentAssistantText = "";
 }
 
 function updateSendButton() {
