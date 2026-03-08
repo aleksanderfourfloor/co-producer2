@@ -69,7 +69,7 @@ Work through these phases:
 
 Be creative and make it sound good! Use proper music theory, add velocity variation for feel, and think about how the parts work together.`;
 
-    for await (const event of this.ai.chat(autonomousPrompt)) {
+    for await (const event of this.ai.chat(autonomousPrompt, "creative")) {
       yield event;
     }
   }

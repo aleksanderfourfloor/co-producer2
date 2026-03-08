@@ -1,6 +1,7 @@
 import OpenAI from "openai";
-import { getToolDefinitions, getToolHandler } from "../tools/index.js";
+import { getToolDefinitions, getToolDefinitionsByNames, getToolHandler } from "../tools/index.js";
 import { AbletonService } from "./ableton.js";
+import { RouterService, IntentCategory } from "./router.js";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -123,12 +124,12 @@ export class AIService {
   private openai: OpenAI;
   private conversationHistory: ChatMessage[] = [];
   private ableton: AbletonService;
-  private model: string;
+  private router: RouterService;
 
   constructor(ableton: AbletonService) {
     this.openai = new OpenAI();
     this.ableton = ableton;
-    this.model = process.env.OPENAI_MODEL || "gpt-4o";
+    this.router = new RouterService();
     this.resetConversation();
   }
 
@@ -142,13 +143,30 @@ export class AIService {
    * Process a user message through the AI with tool calling.
    * Yields events as the agent thinks, calls tools, and responds.
    */
-  async *chat(userMessage: string): AsyncGenerator<AgentEvent> {
+  async *chat(userMessage: string, forceIntent?: IntentCategory): AsyncGenerator<AgentEvent> {
+    // Determine route before adding into history
+    const decision = forceIntent 
+      ? { intent: forceIntent, model: forceIntent === "simple" ? process.env.OPENAI_MODEL_FAST || "gpt-4o-mini" : process.env.OPENAI_MODEL || "gpt-4o", tools: [] } // tools: [] means all tools in logic below
+      : await this.router.routeMessage(userMessage);
+      
+    // Re-resolve tools if forced
+    if (forceIntent && forceIntent !== "creative") {
+      const tempDecision = await this.router.routeMessage(userMessage);
+      decision.tools = tempDecision.tools;
+    } else if (forceIntent === "creative") {
+      decision.tools = getToolDefinitions().map(t => t.function.name);
+    }
+      
+    yield { type: "thinking", data: { message: `Routing request as '${decision.intent}' intent using model ${decision.model}` } };
+
     // Add user message to history
     this.conversationHistory.push({ role: "user", content: userMessage });
 
     // Agentic loop — keep going until we get a text response (no more tool calls)
     let iterations = 0;
     const MAX_ITERATIONS = 25; // safety limit
+
+    const toolsDef = getToolDefinitionsByNames(decision.tools);
 
     while (iterations < MAX_ITERATIONS) {
       iterations++;
@@ -161,9 +179,9 @@ export class AIService {
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
           response = await this.openai.chat.completions.create({
-            model: this.model,
+            model: decision.model,
             messages: this.conversationHistory as any,
-            tools: getToolDefinitions() as any,
+            tools: toolsDef as any,
             tool_choice: "auto",
             temperature: 0.7,
           });
