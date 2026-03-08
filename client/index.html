@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Co-Producer — AI Music Production Agent</title>
+  <meta name="description" content="AI co-producer agent for Ableton Live. Compose, listen, evaluate, and iterate." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <div class="header-left">
+        <div class="logo">
+          <h1>Co-Producer</h1>
+        </div>
+        <span class="version-badge">v0.1 MVP</span>
+      </div>
+      <div class="header-right">
+        <div id="connection-status" class="connection-indicator disconnected">
+          <span class="status-dot"></span>
+          <span class="status-text">Disconnected</span>
+        </div>
+        <button id="reset-btn" class="btn btn-ghost" title="Reset conversation">↻ Reset</button>
+      </div>
+    </header>
+
+    <!-- Main Layout -->
+    <main id="main">
+      <!-- Left Panel: Session Info -->
+      <aside id="session-panel">
+        <div class="panel-header">
+          <h2>Session</h2>
+          <button id="refresh-session-btn" class="btn btn-icon" title="Refresh">⟳</button>
+        </div>
+
+        <div id="session-info" class="session-info">
+          <div class="session-empty">Connect to Ableton Live to see session info</div>
+        </div>
+
+        <div class="panel-header" style="margin-top: 1rem;">
+          <h2>Agent Activity</h2>
+        </div>
+        <div id="activity-log" class="activity-log">
+          <div class="activity-empty">Agent activity will appear here</div>
+        </div>
+      </aside>
+
+      <!-- Center: Chat -->
+      <section id="chat-panel">
+        <div id="chat-messages" class="chat-messages">
+          <div class="message system-message">
+            <div class="message-content">
+              <p><strong>Welcome to Co-Producer!</strong></p>
+              <p>I'm your AI music production assistant. I can work directly inside your Ableton Live session — reading tracks, writing MIDI clips, adjusting tempo, and more.</p>
+              <p>Try asking me:</p>
+              <ul>
+                <li>"What's in my project right now?"</li>
+                <li>"Set the tempo to 90 BPM"</li>
+                <li>"Create a chill lo-fi drum pattern on Track 1"</li>
+                <li>"Write a chord progression in C minor"</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div id="chat-input-area" class="chat-input-area">
+          <div class="input-wrapper">
+            <textarea
+              id="chat-input"
+              placeholder="Tell me what to create, or ask about your session..."
+              rows="1"
+            ></textarea>
+            <button id="send-btn" class="btn btn-primary" disabled>
+              <span class="send-icon">↑</span>
+            </button>
+          </div>
+          <div class="input-hint">
+            Press <kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for newline
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
