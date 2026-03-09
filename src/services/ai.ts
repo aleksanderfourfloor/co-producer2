@@ -323,7 +323,7 @@ export class AIService {
                   toolCalls[tc.index] = { 
                     id: tc.id, 
                     type: tc.type || "function", 
-                    function: { name: tc.function?.name || "", arguments: "" } 
+                    function: { name: "", arguments: "" } 
                   };
                 }
                 if (tc.function?.name) toolCalls[tc.index].function.name += tc.function.name;
