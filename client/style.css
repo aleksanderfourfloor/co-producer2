@@ -525,6 +525,18 @@ main {
   border-radius: var(--radius-lg);
 }
 
+.model-badge {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-bottom: var(--spacing-sm);
+  font-family: var(--font-mono);
+}
+
 /* Assistant message */
 .assistant-message .message-content {
   background: transparent;

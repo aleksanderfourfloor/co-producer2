@@ -90,9 +90,7 @@ function handleServerMessage(msg) {
     case "response_chunk":
       hideThinking();
       if (!currentAssistantDiv) {
-        currentAssistantDiv = document.createElement("div");
-        currentAssistantDiv.className = "message assistant-message";
-        currentAssistantDiv.innerHTML = `<div class="message-content"></div>`;
+        currentAssistantDiv = createAssistantMessageNode(msg.data.model);
         chatMessages.appendChild(currentAssistantDiv);
       }
       currentAssistantText += msg.data.text;
@@ -109,7 +107,10 @@ function handleServerMessage(msg) {
         currentAssistantText = "";
       } else if (msg.data.content) {
         // Fallback for non-chunked text
-        addAssistantMessage(msg.data.content);
+        const fallbackDiv = createAssistantMessageNode(msg.data.model);
+        fallbackDiv.querySelector(".message-content").innerHTML = formatMarkdown(msg.data.content);
+        chatMessages.appendChild(fallbackDiv);
+        scrollChat();
       }
       isProcessing = false;
       updateSendButton();
@@ -252,10 +253,20 @@ function addUserMessage(text) {
   scrollChat();
 }
 
-function addAssistantMessage(text) {
-  const msg = document.createElement("div");
-  msg.className = "message assistant-message";
-  msg.innerHTML = `<div class="message-content">${formatMarkdown(text)}</div>`;
+function createAssistantMessageNode(modelName) {
+  const div = document.createElement("div");
+  div.className = "message assistant-message";
+  const badgeHTML = modelName ? `<div class="model-badge">${modelName}</div>` : "";
+  div.innerHTML = `
+    ${badgeHTML}
+    <div class="message-content"></div>
+  `;
+  return div;
+}
+
+function addAssistantMessage(text, modelName) {
+  const msg = createAssistantMessageNode(modelName);
+  msg.querySelector(".message-content").innerHTML = formatMarkdown(text);
   chatMessages.appendChild(msg);
   scrollChat();
 }

@@ -246,7 +246,7 @@ export class AIService {
             if (delta.content) {
               content += delta.content;
               // Yield the text piece to the WebSocket client immediately
-              yield { type: "response_chunk", data: { text: delta.content } };
+              yield { type: "response_chunk", data: { text: delta.content, model: decision.model } };
             }
             
             // Rebuild the tool arguments string
@@ -395,7 +395,7 @@ export class AIService {
 
       // No tool calls — we have a final text response
       if (message.content) {
-        yield { type: "response", data: { content: message.content } };
+        yield { type: "response", data: { content: message.content, model: decision.model } };
       }
 
       break; // Done
