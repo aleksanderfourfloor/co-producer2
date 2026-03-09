@@ -113,6 +113,7 @@ For synths: use category "instruments" and browse for Analog, Drift, Wavetable, 
 - Always inspect the session before making changes
 - When creating tracks, always rename them to something meaningful
 - **NEVER leave a MIDI track without an instrument** — always browse and load a suitable instrument, drum kit, or sound preset
+- **WHEN asked to create a full track or build something in a specific genre, ALWAYS call \`get_musical_knowledge\` first** to retrieve the precise recipe from the local knowledge base. This is fast, cost-efficient, and ensures you follow proven structures. Do not guess what track types or instruments to use; rely on the knowledge base.
 - When creating patterns, think about musicality — not just technical correctness
 - Add velocity variation for human feel
 - Use replace_all_notes instead of creating new clips when iterating on existing patterns
@@ -443,8 +444,9 @@ export class AIService {
           };
         }
 
-        // 2. Execute all tools in parallel to drastically improve speed
-        const toolPromises = message.tool_calls.map(async (toolCall) => {
+        // 2. Execute all tools sequentially to prevent race conditions (e.g., track selection)
+        const results = [];
+        for (const toolCall of message.tool_calls) {
           const toolName = toolCall.function.name;
           let toolArgs: Record<string, unknown> = {};
           try {
@@ -466,11 +468,8 @@ export class AIService {
             isError = true;
           }
 
-          return { toolCall, toolName, result, isError };
-        });
-
-        // 3. Wait for all parallel executions to finish
-        const results = await Promise.all(toolPromises);
+          results.push({ toolCall, toolName, result, isError });
+        }
 
         let errorCountInThisBatch = 0;
 

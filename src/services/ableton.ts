@@ -260,6 +260,13 @@ export class AbletonService extends EventEmitter {
   async createMidiTrack(index?: number): Promise<{ index: number; name: string }> {
     const track = await this.ableton.song.createMidiTrack(index);
     const name = await track.get("name");
+    
+    try {
+      await this.ableton.song.view.set("selected_track", track.raw.id);
+    } catch(err) {
+      console.warn("[Ableton] Could not auto-select new MIDI track")
+    }
+
     // Find the index of the newly created track
     const allTracks = await this.ableton.song.get("tracks");
     const trackIndex = allTracks.findIndex((t) => t.raw.id === track.raw.id);
@@ -269,6 +276,13 @@ export class AbletonService extends EventEmitter {
   async createAudioTrack(index?: number): Promise<{ index: number; name: string }> {
     const track = await this.ableton.song.createAudioTrack(index);
     const name = await track.get("name");
+    
+    try {
+      await this.ableton.song.view.set("selected_track", track.raw.id);
+    } catch(err) {
+      console.warn("[Ableton] Could not auto-select new audio track")
+    }
+
     const allTracks = await this.ableton.song.get("tracks");
     const trackIndex = allTracks.findIndex((t) => t.raw.id === track.raw.id);
     return { index: trackIndex, name };
@@ -580,6 +594,11 @@ export class AbletonService extends EventEmitter {
   async setTrackSolo(trackIndex: number, solo: boolean): Promise<void> {
     const track = await this.getTrackByIndex(trackIndex);
     await track.set("solo", solo);
+  }
+
+  async selectTrack(trackIndex: number): Promise<void> {
+    const track = await this.getTrackByIndex(trackIndex);
+    await this.ableton.song.view.set("selected_track", track.raw.id);
   }
 
   async setTrackVolume(trackIndex: number, value: number): Promise<void> {

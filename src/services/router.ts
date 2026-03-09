@@ -141,6 +141,7 @@ Respond with ONLY the category name in lowercase: "simple", "creative", "edit", 
             ...TOOL_GROUPS.clipProps,
             ...TOOL_GROUPS.trackOps,
             ...TOOL_GROUPS.devices,
+            ...TOOL_GROUPS.knowledge,
             ...TOOL_GROUPS.ux
           ]
         };
@@ -150,6 +151,7 @@ Respond with ONLY the category name in lowercase: "simple", "creative", "edit", 
           intent, provider, model,
           tools: [
             ...TOOL_GROUPS.session,
+            ...TOOL_GROUPS.knowledge,
             ...TOOL_GROUPS.ux
           ]
         };

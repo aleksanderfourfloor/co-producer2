@@ -64,6 +64,7 @@ import {
   deleteDeviceTool,
 } from "./devices.js";
 import { analyseAudioTool } from "./analysis.js";
+import { getMusicalKnowledgeTool } from "./knowledge.js";
 
 // ── Tool Definition Type ────────────────────────────────────────
 
@@ -156,6 +157,9 @@ const ALL_TOOLS: ToolDef[] = [
 
   // Analysis
   analyseAudioTool,
+
+  // Knowledge
+  getMusicalKnowledgeTool,
 ];
 
 /** All tool definitions formatted for OpenAI function calling */
@@ -218,6 +222,9 @@ export const TOOL_GROUPS = {
   ],
   analysis: [
     "analyse_audio"
+  ],
+  knowledge: [
+    "get_musical_knowledge"
   ],
   ux: [
     "update_ui_status"

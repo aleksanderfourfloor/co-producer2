@@ -131,6 +131,10 @@ If the exact name doesn't match, browse the folder first to see available items.
             items: { type: "string" },
             description: 'Path of folder/item names to navigate to and load. Always browse first if unsure of the exact path.',
           },
+          track_index: {
+            type: "number",
+            description: "Optional zero-based index of the track to load onto. If provided, the tool will explicitly select this track before loading, preventing misplacement mistakes.",
+          },
         },
         required: ["category", "path"],
       },
@@ -139,12 +143,18 @@ If the exact name doesn't match, browse the folder first to see available items.
   handler: async (ableton: AbletonService, args: Record<string, unknown>) => {
     const category = args.category as any;
     const path = args.path as string[];
+    
+    if (args.track_index !== undefined) {
+      await ableton.selectTrack(args.track_index as number);
+    }
 
     const loadedName = await ableton.loadBrowserItem(category, path);
     return {
       success: true,
       loaded: loadedName,
-      message: `Loaded "${loadedName}" onto the selected track`,
+      message: args.track_index !== undefined 
+        ? `Loaded "${loadedName}" onto track ${args.track_index}`
+        : `Loaded "${loadedName}" onto the selected track`,
     };
   },
 };
