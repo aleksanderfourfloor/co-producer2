@@ -289,6 +289,10 @@ export class AIService {
           let content = "";
           let toolCalls: any[] = [];
           
+          // Buffering logic to prevent raw tool JSON from leaking to the UI
+          let isBufferingLeakedTool = false;
+          let hasDecidedBuffering = false;
+          
           // Reconstitute the message from chunks
           for await (const chunk of stream) {
             const delta = chunk.choices[0]?.delta;
@@ -296,8 +300,20 @@ export class AIService {
             
             if (delta.content) {
               content += delta.content;
-              // Yield the text piece to the WebSocket client immediately
-              yield { type: "response_chunk", data: { text: delta.content, model: decision.model } };
+              const trimmed = content.trim();
+              
+              if (!hasDecidedBuffering && trimmed.length > 0) {
+                // If it starts looking like JSON or a code block, buffer the whole stream
+                if (trimmed.startsWith("{") || trimmed.startsWith("```")) {
+                  isBufferingLeakedTool = true;
+                }
+                hasDecidedBuffering = true;
+              }
+
+              if (!isBufferingLeakedTool) {
+                // Yield the text piece to the WebSocket client immediately
+                yield { type: "response_chunk", data: { text: delta.content, model: decision.model } };
+              }
             }
             
             // Rebuild the tool arguments string
@@ -316,12 +332,62 @@ export class AIService {
             }
           }
 
+          // If we buffered the stream because it looked like JSON, try to intercept the leaked tool call
+          if (isBufferingLeakedTool && content.trim().length > 0) {
+            let intercepted = false;
+            
+            if (toolCalls.length === 0) {
+              try {
+                // Extract JSON from markdown blocks if present
+                let cleanContent = content.trim();
+                if (cleanContent.startsWith("```") && cleanContent.endsWith("```")) {
+                  cleanContent = cleanContent.replace(/```json/gi, "").replace(/```/g, "").trim();
+                }
+                
+                // Clean Python-esque hallucinated tokens
+                cleanContent = cleanContent.replace(/None/g, "null").replace(/True/g, "true").replace(/False/g, "false");
+                
+                // Allow multiple tools if wrapped in array
+                const parsed = JSON.parse(cleanContent);
+                const items = Array.isArray(parsed) ? parsed : [parsed];
+                
+                for (const item of items) {
+                  if (item.name || (item.tool && item.tool.name) || (item.function && item.function.name)) {
+                    const name = item.name || (item.tool && item.tool.name) || (item.function && item.function.name);
+                    const args = item.parameters || item.arguments || (item.function && item.function.arguments) || {};
+                    
+                    toolCalls.push({
+                      id: "call_local_" + Math.random().toString(36).substring(7),
+                      type: "function",
+                      function: {
+                        name: name,
+                        arguments: typeof args === "string" ? args : JSON.stringify(args)
+                      }
+                    });
+                    intercepted = true;
+                  }
+                }
+                
+                if (intercepted) {
+                  content = ""; // Clear content so AI doesn't think it said this as conversational text
+                }
+              } catch (err) {
+                // Not valid tool JSON
+              }
+            }
+            
+            // If it wasn't a leaked tool call after all, yield the buffered string to the UI
+            if (!intercepted) {
+              yield { type: "response_chunk", data: { text: content, model: decision.model } };
+            }
+          }
+
           // Build a mock response object that matches what the rest of the flow expects
           response = {
             choices: [{
               message: {
                 role: "assistant",
-                content: content || null,
+                content: content,
                 tool_calls: toolCalls.length > 0 ? toolCalls : undefined
               }
             }]
