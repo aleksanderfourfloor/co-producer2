@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { getToolDefinitions, getToolDefinitionsByNames, getToolHandler } from "../tools/index.js";
 import { AbletonService } from "./ableton.js";
-import { RouterService, IntentCategory } from "./router.js";
+import { RouterService, IntentCategory, ModelProvider } from "./router.js";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -126,6 +126,7 @@ For synths: use category "instruments" and browse for Analog, Drift, Wavetable, 
 
 export class AIService {
   private openai: OpenAI;
+  private ollama: OpenAI | null;
   private conversationHistory: ChatMessage[] = [];
   private ableton: AbletonService;
   private router: RouterService;
@@ -134,7 +135,26 @@ export class AIService {
     this.openai = new OpenAI();
     this.ableton = ableton;
     this.router = new RouterService();
+
+    // Create a second OpenAI-compatible client for Ollama (if configured)
+    const ollamaBaseUrl = process.env.OLLAMA_BASE_URL;
+    if (ollamaBaseUrl) {
+      this.ollama = new OpenAI({ baseURL: ollamaBaseUrl, apiKey: "ollama" });
+      console.log(`[AI] Ollama client configured at ${ollamaBaseUrl}`);
+    } else {
+      this.ollama = null;
+      console.log("[AI] No Ollama configured, using OpenAI API only");
+    }
+
     this.resetConversation();
+  }
+
+  /** Returns the appropriate client based on provider */
+  private getClient(provider: ModelProvider): OpenAI {
+    if (provider === "ollama" && this.ollama) {
+      return this.ollama;
+    }
+    return this.openai;
   }
 
   resetConversation(): void {
@@ -184,24 +204,54 @@ export class AIService {
   }
 
   /**
+   * Resolves the routing decision based on intent, model preference, and message content.
+   */
+  private async resolveDecision(
+    userMessage: string, 
+    forceIntent?: IntentCategory, 
+    modelPreference?: string
+  ) {
+    // If user explicitly picked a model from the UI selector
+    if (modelPreference && modelPreference !== "auto") {
+      const isOllama = !modelPreference.startsWith("gpt-");
+      const provider: ModelProvider = isOllama ? "ollama" : "openai";
+      // Still route for tools, but override model/provider
+      const routerDecision = forceIntent 
+        ? this.buildForcedDecision(forceIntent, userMessage)
+        : await this.router.routeMessage(userMessage);
+      return { ...routerDecision, model: modelPreference, provider };
+    }
+
+    // Auto mode: let the router decide everything
+    if (forceIntent) {
+      return this.buildForcedDecision(forceIntent, userMessage);
+    }
+    return await this.router.routeMessage(userMessage);
+  }
+
+  /** Build a decision when intent is forced (e.g. autonomous goals) */
+  private buildForcedDecision(intent: IntentCategory, userMessage: string) {
+    if (intent === "creative") {
+      return {
+        intent,
+        provider: "openai" as ModelProvider,
+        model: process.env.OPENAI_MODEL || "gpt-4o",
+        tools: getToolDefinitions().map(t => t.function.name)
+      };
+    }
+    // For other forced intents, still route for tools
+    return this.router.routeMessage(userMessage).then(d => ({ ...d, intent }));
+  }
+
+  /**
    * Process a user message through the AI with tool calling.
    * Yields events as the agent thinks, calls tools, and responds.
    */
-  async *chat(userMessage: string, forceIntent?: IntentCategory): AsyncGenerator<AgentEvent> {
-    // Determine route before adding into history
-    let decision = forceIntent 
-      ? { intent: forceIntent, model: forceIntent === "simple" ? process.env.OPENAI_MODEL_FAST || "gpt-4o-mini" : process.env.OPENAI_MODEL || "gpt-4o", tools: [] } // tools: [] means all tools in logic below
-      : await this.router.routeMessage(userMessage);
+  async *chat(userMessage: string, forceIntent?: IntentCategory, modelPreference?: string): AsyncGenerator<AgentEvent> {
+    // Determine route
+    let decision = await this.resolveDecision(userMessage, forceIntent, modelPreference);
       
-    // Re-resolve tools if forced
-    if (forceIntent && forceIntent !== "creative") {
-      const tempDecision = await this.router.routeMessage(userMessage);
-      decision.tools = tempDecision.tools;
-    } else if (forceIntent === "creative") {
-      decision.tools = getToolDefinitions().map(t => t.function.name);
-    }
-      
-    yield { type: "thinking", data: { message: `Routing request as '${decision.intent}' intent using model ${decision.model}` } };
+    yield { type: "thinking", data: { message: `Routing as '${decision.intent}' → ${decision.provider}/${decision.model}` } };
 
     // Add user message to history
     this.conversationHistory.push({ role: "user", content: userMessage });
@@ -226,13 +276,14 @@ export class AIService {
       const MAX_RETRIES = 5;
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
-          const stream = await this.openai.chat.completions.create({
+          const client = this.getClient(decision.provider);
+          const stream = await client.chat.completions.create({
             model: decision.model,
             messages: this.conversationHistory as any,
             tools: toolsDef as any,
             tool_choice: "auto",
             temperature: 0.7,
-            stream: true, // Enable Server-Sent Events from OpenAI
+            stream: true,
           });
 
           let content = "";
@@ -380,13 +431,22 @@ export class AIService {
           consecutiveToolFailures = 0;
         }
 
-        // Cascade logic: if we fail twice in a row with the fast model, escalate to the main model
-        if (consecutiveToolFailures >= 2 && decision.model !== (process.env.OPENAI_MODEL || "gpt-4o")) {
-          decision.model = process.env.OPENAI_MODEL || "gpt-4o";
-          decision.tools = getToolDefinitions().map(t => t.function.name);
-          toolsDef = getToolDefinitions();
-          yield { type: "thinking", data: { message: `Model struggled with constraints. Escalating to ${decision.model} with all tools.` } };
-          consecutiveToolFailures = 0; // reset
+        // Cascade logic: escalate on repeated failures
+        if (consecutiveToolFailures >= 2) {
+          if (decision.provider === "ollama") {
+            // Escalate: local → fast API
+            decision.provider = "openai";
+            decision.model = process.env.OPENAI_MODEL_FAST || "gpt-4o-mini";
+            yield { type: "thinking", data: { message: `Local model struggled. Escalating to ${decision.model}.` } };
+          } else if (decision.model !== (process.env.OPENAI_MODEL || "gpt-4o")) {
+            // Escalate: fast API → premium API
+            decision.provider = "openai";
+            decision.model = process.env.OPENAI_MODEL || "gpt-4o";
+            decision.tools = getToolDefinitions().map(t => t.function.name);
+            toolsDef = getToolDefinitions();
+            yield { type: "thinking", data: { message: `Model struggled. Escalating to ${decision.model} with all tools.` } };
+          }
+          consecutiveToolFailures = 0;
         }
 
         // Continue the loop — AI will see the tool results and decide what to do next

@@ -82,7 +82,7 @@ wss.on("connection", (ws) => {
     if (parsed.type === "chat") {
       // Process through the agent
       try {
-        for await (const event of agent.processMessage(parsed.message)) {
+        for await (const event of agent.processMessage(parsed.message, parsed.modelPreference)) {
           ws.send(JSON.stringify(event));
         }
       } catch (err: any) {

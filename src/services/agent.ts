@@ -24,7 +24,7 @@ export class AgentService {
    * Process a user message — can be a chat message or an autonomous goal.
    * Yields agent events as it works.
    */
-  async *processMessage(message: string): AsyncGenerator<AgentEvent> {
+  async *processMessage(message: string, modelPreference?: string): AsyncGenerator<AgentEvent> {
     // Check Ableton connection
     if (!this.ableton.isConnected()) {
       yield {
@@ -38,7 +38,7 @@ export class AgentService {
     }
 
     // Delegate to AI service which handles the tool-calling loop
-    for await (const event of this.ai.chat(message)) {
+    for await (const event of this.ai.chat(message, undefined, modelPreference)) {
       yield event;
     }
   }

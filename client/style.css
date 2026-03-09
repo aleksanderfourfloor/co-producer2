@@ -528,12 +528,12 @@ main {
 .model-badge {
   font-size: 0.7rem;
   color: var(--text-muted);
-  background: var(--bg-panel);
-  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
   padding: 2px 6px;
   border-radius: 4px;
   display: inline-block;
-  margin-bottom: var(--spacing-sm);
+  margin-bottom: 4px;
   font-family: var(--font-mono);
 }
 
@@ -593,11 +593,38 @@ main {
   color: var(--text-muted);
 }
 
+.input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.4rem;
+}
+
 .input-hint {
-  text-align: center;
   font-size: 0.7rem;
   color: var(--text-muted);
-  margin-top: 0.4rem;
+}
+
+.model-selector select {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.model-selector select:hover {
+  border-color: var(--border-focus);
+}
+
+.model-selector select:focus {
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-glow);
 }
 
 .input-hint kbd {

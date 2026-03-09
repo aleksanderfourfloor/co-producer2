@@ -23,6 +23,7 @@ const activityLog = document.getElementById("activity-log");
 const chatMessages = document.getElementById("chat-messages");
 const chatInput = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
+const modelSelect = document.getElementById("model-select");
 
 // ── WebSocket Connection ────────────────────────────────────────
 
@@ -359,7 +360,11 @@ function sendMessage() {
 
   // Send via WebSocket
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "chat", message: text }));
+    ws.send(JSON.stringify({ 
+      type: "chat", 
+      message: text, 
+      modelPreference: modelSelect.value 
+    }));
   } else {
     addErrorMessage("Not connected to server. Trying to reconnect...");
     isProcessing = false;
